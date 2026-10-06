@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workbench</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">Workbench<span>Local vault</span></a
+      ><span class="status"><span class="dot"></span> On this device</span>
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <p class="eyebrow">YOUR CONFIGURATION</p>
+          <h1>Keys, kept close.</h1>
+          <p class="subtitle">
+            An encrypted home for the values your tools need.
+          </p>
+        </div>
+        <button id="add" class="primary" disabled>Add value</button>
+      </div>
+      <div class="toolbar">
+        <label class="search"
+          ><span>Search</span
+          ><input
+            id="search"
+            type="search"
+            placeholder="Find a path, like .service.token"
+            disabled /></label
+        ><select
+          id="group-filter"
+          class="group-filter"
+          aria-label="Filter by object"
+          disabled
+        >
+          <option value="">All objects</option></select
+        ><button id="import" disabled>Import share</button
+        ><button id="identity" disabled>Receiving key</button>
+      </div>
+      <p id="message" role="status" aria-live="polite">
+        Connecting to your local vault...
+      </p>
+      <section class="entries" aria-label="Vault values">
+        <div class="table-head">
+          <span>PATH</span><span>CLASSIFICATION</span><span>ACTIONS</span>
+        </div>
+        <div id="entries"></div>
+        <nav
+          id="pagination"
+          class="pagination"
+          aria-label="Values pages"
+          hidden
+        >
+          <span id="page-summary" aria-live="polite"></span>
+          <div class="pagination-actions">
+            <button id="page-previous" type="button">Previous</button>
+            <span id="page-number"></span>
+            <button id="page-next" type="button">Next</button>
+          </div>
+        </nav>
+      </section>
+      <p class="footnote">
+        Values stay hidden until you reveal them. Copy sends a value directly to
+        this device's clipboard.
+      </p>
+    </main>
+    <dialog id="editor">
+      <form id="edit-form">
+        <div class="dialog-heading">
+          <h2 id="editor-title">Add value</h2>
+          <button
+            type="button"
+            class="close"
+            data-close="editor"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <label
+          >Path<input
+            id="edit-path"
+            required
+            placeholder=".service.token"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="512" /></label
+        ><label
+          >Value<textarea
+            id="edit-value"
+            rows="4"
+            autocomplete="off"
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <div class="form-row">
+          <label
+            >Format<select id="edit-type">
+              <option value="string">Text</option>
+              <option value="json">JSON scalar</option>
+            </select></label
+          ><label
+            >Classification<select id="edit-secret">
+              <option value="secret">Secret</option>
+              <option value="public">Public configuration</option>
+            </select></label
+          >
+        </div>
+        <p class="hint">
+          Paths use dots for objects and lowercase names with _ or -, like
+          cloudflare.api_token.
+        </p>
+        <p class="hint">
+          Secrets stay masked in CLI output, regardless of their name.
+        </p>
+        <p class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close="editor">Cancel</button
+          ><button type="submit" class="primary">Save value</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="share-dialog">
+      <form id="share-form">
+        <div class="dialog-heading">
+          <h2>Share one value</h2>
+          <button
+            type="button"
+            class="close"
+            data-close="share-dialog"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <p id="share-path" class="mono"></p>
+        <label
+          >Recipient's public key<input
+            id="share-to"
+            required
+            placeholder="age1..."
+            autocomplete="off"
+            spellcheck="false"
+        /></label>
+        <p class="hint">
+          Confirm the key belongs to your recipient through a trusted channel.
+          Only their private key can open this packet. The packet does not
+          authenticate you as the sender.
+        </p>
+        <p class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close="share-dialog">Cancel</button
+          ><button type="submit" class="primary">Create encrypted share</button>
+        </div>
+      </form>
+      <div id="share-result" hidden>
+        <label
+          >Encrypted packet<textarea
+            id="share-packet"
+            rows="8"
+            readonly
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button id="share-copy" type="button">Copy packet</button
+          ><button id="share-download" type="button" class="primary">
+            Download packet
+          </button>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="import-dialog">
+      <form id="import-form">
+        <div class="dialog-heading">
+          <h2>Import a shared value</h2>
+          <button
+            type="button"
+            class="close"
+            data-close="import-dialog"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <label
+          >Encrypted packet<textarea
+            id="import-packet"
+            rows="5"
+            required
+            placeholder="Paste an age-encrypted Workbench packet"
+            spellcheck="false"
+          ></textarea></label
+        ><label class="file-label"
+          >Or choose a packet file<input
+            id="import-file"
+            type="file"
+            accept=".wb,.age,.txt" /></label
+        ><button id="inspect" type="button">Check packet</button>
+        <div id="import-details" hidden>
+          <label
+            >Local destination<input
+              id="import-path"
+              required
+              placeholder=".service.token"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="512"
+          /></label>
+          <p id="import-classification" class="hint"></p>
+          <p class="hint">
+            Sender identity is not authenticated. Import only packets you
+            expect.
+          </p>
+          <label class="checkbox"
+            ><input id="import-replace" type="checkbox" />Allow replacing an
+            existing value</label
+          >
+        </div>
+        <p class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close="import-dialog">Cancel</button
+          ><button id="import-submit" type="submit" class="primary" disabled>
+            Import value
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="identity-dialog">
+      <div class="dialog-heading">
+        <h2>Your receiving key</h2>
+        <button
+          type="button"
+          class="close"
+          data-close="identity-dialog"
+          aria-label="Close"
+        >
+          &times;
+        </button>
+      </div>
+      <p class="hint">
+        Give this public key to someone who wants to send you a value. Your
+        private key stays protected by your vault.
+      </p>
+      <textarea id="public-key" rows="3" readonly spellcheck="false"></textarea>
+      <div class="dialog-actions">
+        <button id="identity-copy" type="button" class="primary">
+          Copy public key
+        </button>
+      </div>
+      <p class="dialog-error" role="alert"></p>
+    </dialog>
+  </body>
+</html>

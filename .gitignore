@@ -1,0 +1,7 @@
+/dist/
+*.age
+*.wb
+*.key
+*.pem
+*.env
+.DS_Store

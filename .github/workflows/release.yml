@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: amd64
+            cgo: "0"
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            cgo: "0"
+          - os: macos-15-intel
+            platform: darwin
+            arch: amd64
+            cgo: "1"
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+            cgo: "1"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify source
+        run: |
+          test -z "$(gofmt -l cmd internal skills)"
+          go mod verify
+          go vet ./...
+          go test -race ./...
+          node --check internal/ui/web/app.js
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Build native binary
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          GOOS: ${{ matrix.platform }}
+          GOARCH: ${{ matrix.arch }}
+        run: go build -trimpath -ldflags='-s -w' -o package/wkb ./cmd/workbench
+      - name: Verify version and real CLI workflows
+        run: |
+          test "v$(package/wkb version)" = "$RELEASE_TAG"
+          python3 scripts/smoke.py package/wkb
+      - name: Package
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cp LICENSE README.md SECURITY.md CONTRIBUTING.md package/
+          tar -czf "workbench-${RELEASE_TAG}-${PLATFORM}-${ARCH}.tar.gz" -C package .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: workbench-${{ matrix.platform }}-${{ matrix.arch }}
+          path: workbench-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    name: Publish verified archives
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: workbench-*
+          merge-multiple: true
+          path: release
+      - name: Checksums
+        working-directory: release
+        run: sha256sum workbench-*.tar.gz > SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "Workbench $RELEASE_TAG" "${args[@]}"
