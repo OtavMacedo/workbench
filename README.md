@@ -39,7 +39,7 @@ This installs `wkb` in `~/.local/bin`. Keep that directory on your PATH. To upda
 an existing installation, add `--replace`; choose another bin with `--dir DIR`.
 The installer preserves existing symlinks and does not touch your vault.
 
-Requires Go 1.26.6+. macOS uses the native Keychain and needs Apple's Command Line
+Requires Go 1.26.9+. macOS uses the native Keychain and needs Apple's Command Line
 Tools with CGO. Linux uses a passphrase automatically. A macOS build without CGO
 can use `wkb init --password`.
 

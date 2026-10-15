@@ -17,7 +17,7 @@ and unnecessary dependencies out of a single-binary, offline tool.
 
 ## Run locally
 
-Use Go 1.26.6+, Python 3 and Node.js. Native macOS Keychain builds also need
+Use Go 1.26.9+, Python 3 and Node.js. Native macOS Keychain builds also need
 Apple's Command Line Tools and CGO. Linux uses passphrase-protected identities.
 
 ```sh
