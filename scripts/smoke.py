@@ -70,6 +70,26 @@ def main():
         run("sender", "skill", "install", "--dir", str(root / "skills"))
         assert (root / "skills" / "workbench" / "SKILL.md").is_file()
         run("sender", "doctor")
+
+        if sys.platform.startswith("linux"):
+            def without_terminal(*args, stdin=subprocess.DEVNULL):
+                return subprocess.run([str(binary), "--dir", str(root / "sender"), *args],
+                                      stdin=stdin, capture_output=True, env=env, timeout=45)
+
+            agent = ["exec", "service.token=SMOKE_TOKEN", "--", *child]
+            locked = without_terminal(*agent)
+            assert locked.returncode == 1 and b"wkb unlock" in locked.stderr, "locked vault opened"
+            primary, secondary = os.openpty()
+            try:
+                os.write(primary, b"synthetic-smoke-passphrase-only\n")
+                unlock = without_terminal("unlock", "--ttl", "1m", stdin=secondary)
+            finally:
+                os.close(secondary)
+                os.close(primary)
+            assert unlock.returncode == 0, unlock.stderr.decode()
+            assert without_terminal(*agent).returncode == 17, "unlock did not reach another process"
+            run("sender", "lock")
+            assert without_terminal(*agent).returncode == 1, "lock kept the vault open"
     print("CLI smoke test passed: isolated vaults, transient use, sharing, recovery and installation.")
 
 

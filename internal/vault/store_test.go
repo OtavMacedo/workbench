@@ -3,6 +3,7 @@ package vault_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"filippo.io/age"
 	"filippo.io/age/armor"
 	"github.com/pedroloch/workbench/internal/testutil"
 	"github.com/pedroloch/workbench/internal/vault"
@@ -50,7 +53,7 @@ func TestDiskEncryptionAndIndependentOpen(t *testing.T) {
 			t.Fatal("insecure file mode")
 		}
 	}
-	second, err := vault.Open(s.Dir, ring, func() (string, error) { t.Fatal("unexpected password prompt"); return "", nil })
+	second, err := vault.Open(s.Dir, ring, nil, func() (string, error) { t.Fatal("unexpected password prompt"); return "", nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +185,7 @@ func TestPrivatePathsAndLinks(t *testing.T) {
 
 func TestConcurrentWritersKeepEveryUpdate(t *testing.T) {
 	s, ring := fixture(t)
-	second, err := vault.Open(s.Dir, ring, nil)
+	second, err := vault.Open(s.Dir, ring, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,10 +228,10 @@ func TestPasswordVaultAndRecovery(t *testing.T) {
 	if err := s.Set(".credential", secret("SYNTHETIC-RECOVERY-VALUE"), false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vault.Open(dir, ring, func() (string, error) { return "wrong synthetic passphrase", nil }); err == nil {
+	if _, err := vault.Open(dir, ring, nil, func() (string, error) { return "wrong synthetic passphrase", nil }); err == nil {
 		t.Fatal("wrong password accepted")
 	}
-	if _, err := vault.Open(dir, ring, func() (string, error) { return "synthetic vault passphrase", nil }); err != nil {
+	if _, err := vault.Open(dir, ring, nil, func() (string, error) { return "synthetic vault passphrase", nil }); err != nil {
 		t.Fatal(err)
 	}
 	backup, err := s.Backup("synthetic recovery passphrase")
@@ -317,5 +320,82 @@ func TestPathsClassificationAndStructure(t *testing.T) {
 	b, _ = json.Marshal(tree)
 	if !bytes.Contains(b, []byte("9007199254740993")) {
 		t.Fatal("integer precision lost")
+	}
+}
+
+func passwordFixture(t *testing.T) (string, *testutil.Ring) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "vault")
+	ring := &testutil.Ring{}
+	s, err := vault.Init(dir, ring, vault.InitOptions{UsePassword: true, Password: "synthetic vault passphrase"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(".credential", secret("SYNTHETIC-UNLOCK-VALUE"), false); err != nil {
+		t.Fatal(err)
+	}
+	return dir, ring
+}
+
+func passphrase() (string, error) { return "synthetic vault passphrase", nil }
+func noTerminal() (string, error) { return "", errors.New("no terminal") }
+
+func TestUnlockOpensWithoutPassphraseUntilLocked(t *testing.T) {
+	dir, ring := passwordFixture(t)
+	session := &testutil.Session{}
+	if _, err := vault.Open(dir, ring, session, noTerminal); err == nil {
+		t.Fatal("locked vault opened without passphrase")
+	}
+	s, err := vault.Open(dir, ring, nil, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Unlock(session, time.Hour); err != nil || session.TTL != time.Hour {
+		t.Fatal("unlock did not cache the identity with its ttl")
+	}
+	unlocked, err := vault.Open(dir, ring, session, noTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := unlocked.View()
+	if err != nil || vault.Display(d.Entries[".credential"].Value) != "SYNTHETIC-UNLOCK-VALUE" {
+		t.Fatal("unlocked vault cannot read its data")
+	}
+	if _, err := vault.Open(dir, ring, nil, noTerminal); err == nil {
+		t.Fatal("open without cache skipped the passphrase")
+	}
+	if err := vault.Lock(dir, session); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vault.Open(dir, ring, session, noTerminal); err == nil {
+		t.Fatal("lock kept the vault open")
+	}
+}
+
+func TestUnlockRejectsKeychainVaultsAndForeignIdentities(t *testing.T) {
+	s, ring := fixture(t)
+	session := &testutil.Session{}
+	if err := s.Unlock(session, time.Hour); err == nil {
+		t.Fatal("keychain vault unlocked")
+	}
+	if err := vault.Lock(s.Dir, session); err == nil {
+		t.Fatal("keychain vault locked")
+	}
+	dir, ring := passwordFixture(t)
+	b, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta struct{ Account string }
+	if err := json.Unmarshal(b, &meta); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = session.Put(meta.Account, foreign.String(), time.Hour)
+	if _, err := vault.Open(dir, ring, session, passphrase); err == nil {
+		t.Fatal("foreign cached identity accepted")
 	}
 }

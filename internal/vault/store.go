@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 	"unicode/utf8"
 
 	"filippo.io/age"
@@ -221,45 +222,65 @@ func Init(dir string, ring keyring.Backend, options InitOptions) (*Store, error)
 	return &Store{dir, m, identity}, nil
 }
 
-func Open(dir string, ring keyring.Backend, password func() (string, error)) (*Store, error) {
+func readMetadata(root *os.Root) (Metadata, error) {
+	b, err := readPrivate(root, "meta.json")
+	if err != nil {
+		return Metadata{}, err
+	}
+	var m Metadata
+	if err := decode(b, &m); err != nil || m.Version != Version || len(m.Account) != 32 {
+		return Metadata{}, errors.New("invalid vault metadata")
+	}
+	if _, err := hex.DecodeString(m.Account); err != nil {
+		return Metadata{}, errors.New("invalid vault metadata")
+	}
+	return m, nil
+}
+
+func unsealIdentity(root *os.Root, password func() (string, error)) (string, error) {
+	sealed, err := readPrivate(root, "identity.age")
+	if err != nil {
+		return "", err
+	}
+	pass, err := password()
+	if err != nil {
+		return "", err
+	}
+	i, err := passwordIdentity(pass)
+	if err != nil {
+		return "", err
+	}
+	clear, err := decrypt(sealed, i)
+	if err != nil {
+		return "", err
+	}
+	return string(clear), nil
+}
+
+// Open reads a passphrase vault's identity from cache when unlocked; a nil
+// cache always asks for the passphrase.
+func Open(dir string, ring keyring.Backend, cache keyring.Cache, password func() (string, error)) (*Store, error) {
 	root, err := openDirectory(dir, false)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	b, err := readPrivate(root, "meta.json")
+	m, err := readMetadata(root)
 	if err != nil {
 		return nil, err
-	}
-	var m Metadata
-	if err := decode(b, &m); err != nil || m.Version != Version || len(m.Account) != 32 {
-		return nil, errors.New("invalid vault metadata")
-	}
-	if _, err := hex.DecodeString(m.Account); err != nil {
-		return nil, errors.New("invalid vault metadata")
 	}
 	var raw string
 	switch m.Backend {
 	case "keychain":
 		raw, err = ring.Get(m.Account)
 	case "password":
-		sealed, e := readPrivate(root, "identity.age")
-		if e != nil {
-			return nil, e
+		err = keyring.ErrLocked
+		if cache != nil {
+			raw, err = cache.Get(m.Account)
 		}
-		pass, e := password()
-		if e != nil {
-			return nil, e
+		if err != nil {
+			raw, err = unsealIdentity(root, password)
 		}
-		i, e := passwordIdentity(pass)
-		if e != nil {
-			return nil, e
-		}
-		clear, e := decrypt(sealed, i)
-		if e != nil {
-			return nil, e
-		}
-		raw = string(clear)
 	default:
 		return nil, errors.New("unsupported vault backend")
 	}
@@ -279,6 +300,29 @@ func Open(dir string, ring keyring.Backend, password func() (string, error)) (*S
 
 func (s *Store) Identity() string { return s.metadata.Recipient }
 func (s *Store) Backend() string  { return s.metadata.Backend }
+
+func (s *Store) Unlock(cache keyring.Cache, ttl time.Duration) error {
+	if s.metadata.Backend != "password" {
+		return errors.New("unlock applies only to passphrase vaults")
+	}
+	return cache.Put(s.metadata.Account, s.identity.String(), ttl)
+}
+
+func Lock(dir string, cache keyring.Cache) error {
+	root, err := openDirectory(dir, false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	m, err := readMetadata(root)
+	if err != nil {
+		return err
+	}
+	if m.Backend != "password" {
+		return errors.New("lock applies only to passphrase vaults")
+	}
+	return cache.Delete(m.Account)
+}
 
 func (s *Store) read(root *os.Root) (Document, error) {
 	b, err := readPrivate(root, "vault.age")

@@ -46,6 +46,12 @@ reveals, clipboard history, extensions and screen capture can expose values.
 A private passphrase file enables non-interactive use but is itself plaintext
 key material. Protect it separately from the vault and avoid committing it.
 
+On Linux, `unlock` keeps the private identity in the kernel user keyring until
+its ttl expires or `lock` runs. Meanwhile any process of the same user,
+including an agent, can open the vault and read that identity without the
+passphrase, as with an unlocked macOS Keychain. The default Docker seccomp
+profile and sandboxes with their own user namespace cannot reach this keyring.
+
 Vault authentication detects modification without a key. It does not provide a
 trusted monotonic version counter, prevent rollback to an older valid vault, or
 protect availability from someone who can delete its files. Permission checks

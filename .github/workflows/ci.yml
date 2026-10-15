@@ -34,6 +34,8 @@ jobs:
           go mod verify
           node --check internal/ui/web/app.js
       - name: Vet and test with the race detector
+        env:
+          WORKBENCH_TEST_KERNEL_KEYRING: "1"
         run: |
           go vet ./...
           go test -race -cover ./...

@@ -62,7 +62,7 @@ func (a *App) seal(args []string) error {
 		return err
 	}
 	if *to == "" {
-		s, err := a.open()
+		s, err := a.open(a.Session)
 		if err != nil {
 			return err
 		}

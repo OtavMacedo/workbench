@@ -50,6 +50,17 @@ wkb init
 wkb ui
 ```
 
+On Linux, agents run commands without a terminal and cannot type the
+passphrase. Unlock the vault in your own terminal before handing work over:
+
+```sh
+wkb unlock --ttl 8h
+wkb lock
+```
+
+Until the ttl expires or you run `lock`, commands without a terminal open the
+vault from the kernel keyring. Unlocking again asks for the passphrase.
+
 ## Give your agent a key, without saving it
 
 Run this in your own terminal:
@@ -245,6 +256,7 @@ opt-in and creates/deletes only a randomized synthetic entry:
 
 ```sh
 WORKBENCH_TEST_KEYCHAIN=1 go test ./internal/keyring -run TestNativeKeychainRoundTrip
+WORKBENCH_TEST_KERNEL_KEYRING=1 go test ./internal/keyring -run TestKernelSession
 ```
 
 ## Contribute

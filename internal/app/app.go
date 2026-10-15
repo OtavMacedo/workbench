@@ -25,11 +25,14 @@ import (
 
 const Version = "0.1.0"
 
+var errNoTerminal = errors.New("a terminal is required for the passphrase; automation can use a private --password-file")
+
 type App struct {
 	In           io.Reader
 	Out          io.Writer
 	Err          io.Writer
 	Ring         keyring.Backend
+	Session      keyring.Cache
 	Copy         func(string) error
 	Exec         func(string, []string, []string) error
 	dir          string
@@ -37,7 +40,7 @@ type App struct {
 }
 
 func New() *App {
-	return &App{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Ring: keyring.System{}, Copy: Clipboard, Exec: syscall.Exec}
+	return &App{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Ring: keyring.System{}, Session: keyring.Session{}, Copy: Clipboard, Exec: syscall.Exec}
 }
 
 func (a *App) Run(args []string) int {
@@ -101,7 +104,7 @@ func (a *App) password(file, prompt string, confirm bool) (string, error) {
 	}
 	f, ok := a.In.(*os.File)
 	if !ok || !term.IsTerminal(int(f.Fd())) {
-		return "", errors.New("a terminal is required for the passphrase; automation can use a private --password-file")
+		return "", errNoTerminal
 	}
 	fmt.Fprint(a.Err, prompt)
 	b, err := term.ReadPassword(int(f.Fd()))
@@ -133,8 +136,14 @@ func (a *App) confirm(message string) (bool, error) {
 	return strings.EqualFold(strings.TrimSpace(line), "y"), nil
 }
 
-func (a *App) open() (*vault.Store, error) {
-	return vault.Open(a.dir, a.Ring, func() (string, error) { return a.password(a.passwordFile, "Vault passphrase: ", false) })
+func (a *App) open(cache keyring.Cache) (*vault.Store, error) {
+	return vault.Open(a.dir, a.Ring, cache, func() (string, error) {
+		pass, err := a.password(a.passwordFile, "Vault passphrase: ", false)
+		if errors.Is(err, errNoTerminal) && cache != nil && runtime.GOOS == "linux" {
+			return "", errors.New("vault is locked; run wkb unlock in your terminal, or use a private --password-file for automation")
+		}
+		return pass, err
+	})
 }
 
 func (a *App) run(args []string) error {
@@ -176,7 +185,20 @@ func (a *App) run(args []string) error {
 	if command == "seal" {
 		return a.seal(args)
 	}
-	s, err := a.open()
+	if command == "unlock" {
+		return a.unlock(args)
+	}
+	if command == "lock" {
+		if len(args) != 0 {
+			return errors.New("usage: lock")
+		}
+		if err := vault.Lock(a.dir, a.Session); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, "Locked")
+		return nil
+	}
+	s, err := a.open(a.Session)
 	if err != nil {
 		return err
 	}
@@ -253,6 +275,31 @@ func (a *App) initialize(command string, args []string) error {
 		return err
 	}
 	fmt.Fprintf(a.Out, "Vault ready (%s). Create an encrypted recovery backup with workbench backup.\n", s.Backend())
+	return nil
+}
+
+func (a *App) unlock(args []string) error {
+	f := flags("unlock")
+	ttl := f.Duration("ttl", 8*time.Hour, "how long commands without a terminal may open the vault")
+	pos, err := parse(f, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 || *ttl < time.Minute || *ttl > 24*time.Hour {
+		return errors.New("usage: unlock [--ttl 8h]; ttl must be 1m to 24h")
+	}
+	if a.passwordFile != "" {
+		return errors.New("unlock needs the passphrase typed in a terminal, not --password-file")
+	}
+	// Never the cache: extending an unlock must require the passphrase again.
+	s, err := a.open(nil)
+	if err != nil {
+		return err
+	}
+	if err := s.Unlock(a.Session, *ttl); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "Unlocked for %s. Run wkb lock to end it earlier.\n", *ttl)
 	return nil
 }
 
@@ -744,6 +791,8 @@ Usage: workbench [--dir DIR] [--password-file FILE] COMMAND
   import FILE|- [--as PATH] [--yes]   Import data; --replace confirms conflicts
   migrate YAML [--public PATH]       Import private YAML; --yes/--replace for automation
   backup --out FILE                  Passphrase-encrypted recovery backup
+  unlock [--ttl 8h]                  Linux: let commands without a terminal open the vault
+  lock                               End an unlock before its ttl
   restore BACKUP [--password]        Restore identity and data into a NEW vault
   doctor                             Authenticate vault and check permissions
   path                               Show encrypted vault location

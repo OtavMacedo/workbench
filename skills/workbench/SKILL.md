@@ -48,6 +48,10 @@ already produces the secret, `seal --stdin` accepts it through a direct pipe.
 Keep raw values out of chat, argv, shell literals, temporary plaintext files
 and logs. Plaintext already supplied in chat cannot be made secret retroactively.
 
+If a command reports that the vault is locked, ask the human to run
+`wkb unlock` in their own terminal, then retry. Never search for, create or
+pass a passphrase file, and never read the kernel keyring directly.
+
 ## Persist only when requested
 
 If the user explicitly requests storing a supplied packet, use:

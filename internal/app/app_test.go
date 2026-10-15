@@ -30,6 +30,7 @@ func setup(t *testing.T) *harness {
 	h := &harness{store: s}
 	h.app = New()
 	h.app.Ring = ring
+	h.app.Session = &testutil.Session{}
 	h.app.Out = &h.out
 	h.app.Err = &h.stderr
 	h.app.In = strings.NewReader("")
